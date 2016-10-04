@@ -109,6 +109,32 @@ class Parser
     private $utfBom = 0;
 
     /**
+     * @var string
+     */
+    private $line;
+
+    /**
+     * @var int
+     */
+    private $byteLen;
+
+    /**
+     * @var int
+     */
+    private $currentByte;
+
+    /**
+     * @var bool
+     */
+    private $eof;
+
+    /**
+     * @var bool
+     */
+    private $lineEnded;
+
+
+    /**
      * @param resource $stream
      * @param object $listener
      * @param string $lineEnding
@@ -125,59 +151,99 @@ class Parser
             throw new \InvalidArgumentException("Listener must implement JsonStreamingParser\\Listener");
         }
 
-        $this->stream = $stream;
-        $this->listener = $listener;
-        $this->emitWhitespace = $emitWhitespace;
+        $this->stream           = $stream;
+        $this->listener         = $listener;
+        $this->emitWhitespace   = $emitWhitespace;
         $this->emitFilePosition = method_exists($listener, 'filePosition');
-
-        $this->state = self::STATE_START_DOCUMENT;
-        $this->stack = [];
-
-        $this->buffer = '';
-        $this->bufferSize = $bufferSize;
-        $this->unicodeBuffer = [];
-        $this->unicodeEscapeBuffer = '';
-        $this->unicodeHighSurrogate = -1;
-        $this->lineEnding = $lineEnding;
+        $this->bufferSize       = $bufferSize;
+        $this->lineEnding       = $lineEnding;
+        $this->reset();
     }
 
+    /**
+     * Parses json. Returns true if done, or false if interrupted by stop().
+     *
+     * @return void
+     */
     public function parse()
     {
-        $this->lineNumber = 1;
-        $this->charNumber = 1;
-        $eof = false;
+        $this->stopParsing = false;
 
-        while (!feof($this->stream) && !$eof) {
-            $pos = ftell($this->stream);
-            $line = stream_get_line($this->stream, $this->bufferSize, $this->lineEnding);
-            $ended = (bool)(ftell($this->stream) - strlen($line) - $pos);
-            // if we're still at the same place after stream_get_line, we're done
-            $eof = ftell($this->stream) == $pos;
-
-            $byteLen = strlen($line);
-            for ($i = 0; $i < $byteLen; $i++) {
-                if ($this->emitFilePosition) {
-                    $this->listener->filePosition($this->lineNumber, $this->charNumber);
-                }
-                $this->consumeChar($line[$i]);
-                $this->charNumber++;
-
-                if ($this->stopParsing) {
-                    return;
-                }
+        while ($this->currentByte < $this->byteLen) {
+            if ($this->emitFilePosition) {
+                $this->listener->filePosition($this->lineNumber, $this->charNumber);
             }
+            $this->consumeChar($this->line[$this->currentByte]);
+            $this->charNumber++;
+            $this->currentByte++;
 
-            if ($ended) {
-                $this->lineNumber++;
-                $this->charNumber = 1;
+            if ($this->stopParsing) {
+                return false;
             }
-
         }
+
+        if ($this->lineEnded) {
+            $this->lineNumber++;
+            $this->charNumber = 1;
+        }
+
+        if (!$this->getNextChunk()) {
+            return true;
+        }
+
+        return $this->parse();
     }
 
+    /**
+     * Tells parser to stop parsing.
+     *
+     * @return void
+     */
     public function stop()
     {
         $this->stopParsing = true;
+    }
+
+    /**
+     * Resets parser.
+     *
+     * @return void
+     */
+    public function reset()
+    {
+        $this->state                = self::STATE_START_DOCUMENT;
+        $this->stack                = [];
+        $this->buffer               = '';
+        $this->unicodeBuffer        = [];
+        $this->unicodeEscapeBuffer  = '';
+        $this->unicodeHighSurrogate = -1;
+        $this->lineNumber           = 1;
+        $this->charNumber           = 1;
+        $this->eof                  = false;
+        fseek($this->stream, 0);
+    }
+
+
+    /**
+     * Gets next chunk to parse. Returns false when eof is reached.
+     *
+     * @return bool
+     */
+    private function getNextChunk()
+    {
+        if (!feof($this->stream) && !$this->eof) {
+            $pos                = ftell($this->stream);
+            $line               = stream_get_line($this->stream, $this->bufferSize, $this->lineEnding);
+            $this->lineEnded    = (bool)(ftell($this->stream) - strlen($line) - $pos);
+            $this->eof          = ftell($this->stream) == $pos;
+            $this->line         = $line;
+            $this->byteLen      = strlen($line);
+            $this->currentByte  = 0;
+
+            return true;
+        }
+
+        return false;
     }
 
     /**
