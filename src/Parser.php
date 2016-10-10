@@ -168,30 +168,31 @@ class Parser
     public function parse()
     {
         $this->stopParsing = false;
+        while (true) {
+            while ($this->currentByte < $this->byteLen) {
+                if ($this->emitFilePosition) {
+                    $this->listener->filePosition($this->lineNumber, $this->charNumber);
+                }
+                $this->consumeChar($this->line[$this->currentByte]);
+                $this->charNumber++;
+                $this->currentByte++;
 
-        while ($this->currentByte < $this->byteLen) {
-            if ($this->emitFilePosition) {
-                $this->listener->filePosition($this->lineNumber, $this->charNumber);
+                if ($this->stopParsing) {
+                    return false;
+                }
             }
-            $this->consumeChar($this->line[$this->currentByte]);
-            $this->charNumber++;
-            $this->currentByte++;
 
-            if ($this->stopParsing) {
-                return false;
+            if ($this->lineEnded) {
+                $this->lineNumber++;
+                $this->charNumber = 1;
+            }
+
+            if (!$this->getNextChunk()) {
+                return true;
             }
         }
 
-        if ($this->lineEnded) {
-            $this->lineNumber++;
-            $this->charNumber = 1;
-        }
-
-        if (!$this->getNextChunk()) {
-            return true;
-        }
-
-        return $this->parse();
+        return $result;
     }
 
     /**
